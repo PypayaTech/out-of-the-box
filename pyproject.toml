@@ -1,0 +1,23 @@
+[tool.poetry]
+name = "out-of-the-box"
+version = "1.0.0"
+description = "\"I like to get into boxes.\""
+authors = ["PypayaTech"]
+license = "MIT"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.8"
+opencv-python = ">=3.4.0.12, <5.0.0.0"
+numpy = "^1.22.0"
+pillow = "^9.0.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.2.2"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+roy = "out_of_the_box.main:run_app"
