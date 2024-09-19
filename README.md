@@ -24,7 +24,7 @@ A comprehensive toolkit for handling bounding boxes in various formats, includin
 ## Installation
 
 ```
-pip install git+https://github.com/PypayaTech/out-of-the-box.git
+pip install out-of-the-box
 ```
 
 ## Usage
