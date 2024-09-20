@@ -50,6 +50,7 @@ class ROISelector(tk.Frame):
 
         self.start_x = None
         self.start_y = None
+        self.resize_handle = None
 
     def create_format_entries(self, format_name: str, field_names: list) -> dict:
         frame = tk.LabelFrame(self.entry_frame, text=format_name)
@@ -113,35 +114,55 @@ class ROISelector(tk.Frame):
             # Reset the bounding box
             self.bounding_box = None
             self.canvas.delete("box")
+            self.canvas.delete("handle")
 
     def start_draw(self, event):
         x, y = self.get_image_coordinates(event)
         if x is not None and y is not None:
             self.start_x, self.start_y = x, y
+            self.resize_handle = self.get_resize_handle(event.x, event.y)
+            if self.resize_handle:
+                voc = self.bounding_box.to_voc()
+                self.original_box = (voc.xmin, voc.ymin, voc.xmax, voc.ymax)
 
     def draw(self, event):
         if self.start_x is not None and self.start_y is not None:
-            self.canvas.delete("box")
             x, y = self.get_image_coordinates(event)
             if x is not None and y is not None:
-                self.canvas.create_rectangle(
-                    self.start_x * self.scale_factor + self.image_position[0],
-                    self.start_y * self.scale_factor + self.image_position[1],
-                    x * self.scale_factor + self.image_position[0],
-                    y * self.scale_factor + self.image_position[1],
-                    outline="red", tags="box"
-                )
+                if self.resize_handle:
+                    self.resize_box(x, y)
+                else:
+                    self.canvas.delete("box")
+                    self.canvas.delete("handle")
+                    self.canvas.create_rectangle(
+                        self.start_x * self.scale_factor + self.image_position[0],
+                        self.start_y * self.scale_factor + self.image_position[1],
+                        x * self.scale_factor + self.image_position[0],
+                        y * self.scale_factor + self.image_position[1],
+                        outline="red", tags="box"
+                    )
 
     def end_draw(self, event):
         x, y = self.get_image_coordinates(event)
-        if x is not None and y is not None and self.start_x is not None and self.start_y is not None:
-            x1, y1 = min(self.start_x, x), min(self.start_y, y)
-            x2, y2 = max(self.start_x, x), max(self.start_y, y)
+        if x is not None and y is not None:
+            if self.resize_handle:
+                self.resize_box(x, y)
+            elif self.start_x is not None and self.start_y is not None:
+                x1, y1 = min(self.start_x, x), min(self.start_y, y)
+                x2, y2 = max(self.start_x, x), max(self.start_y, y)
 
-            self.update_bounding_box(x1, y1, x2, y2)
+                # Ensure minimum size
+                if x2 - x1 < 5:
+                    x2 = x1 + 5
+                if y2 - y1 < 5:
+                    y2 = y1 + 5
+
+                self.update_bounding_box(x1, y1, x2, y2)
 
         self.start_x = None
         self.start_y = None
+        self.resize_handle = None
+        self.original_box = None
 
     def get_image_coordinates(self, event):
         x = (event.x - self.image_position[0]) / self.scale_factor
@@ -149,12 +170,20 @@ class ROISelector(tk.Frame):
 
         img_height, img_width = self.image.shape[:2]
 
-        if 0 <= x < img_width and 0 <= y < img_height:
-            return int(x), int(y)
-        return None, None
+        x = max(0, min(x, img_width - 1))
+        y = max(0, min(y, img_height - 1))
+
+        return int(x), int(y)
 
     def update_bounding_box(self, x1, y1, x2, y2):
         img_height, img_width = self.image.shape[:2]
+
+        # Ensure the box stays within the image boundaries
+        x1 = max(0, min(x1, img_width - 1))
+        y1 = max(0, min(y1, img_height - 1))
+        x2 = max(0, min(x2, img_width - 1))
+        y2 = max(0, min(y2, img_height - 1))
+
         voc_box = VOCBox(x1, y1, x2, y2, normalized=False)
         self.bounding_box = BoundingBox(voc_box, (img_height, img_width))
         self.update_entries()
@@ -163,14 +192,89 @@ class ROISelector(tk.Frame):
     def draw_bounding_box(self):
         if self.bounding_box:
             self.canvas.delete("box")
+            self.canvas.delete("handle")
             voc = self.bounding_box.to_voc()
-            self.canvas.create_rectangle(
-                voc.xmin * self.scale_factor + self.image_position[0],
-                voc.ymin * self.scale_factor + self.image_position[1],
-                voc.xmax * self.scale_factor + self.image_position[0],
-                voc.ymax * self.scale_factor + self.image_position[1],
-                outline="red", tags="box"
-            )
+            x1 = voc.xmin * self.scale_factor + self.image_position[0]
+            y1 = voc.ymin * self.scale_factor + self.image_position[1]
+            x2 = voc.xmax * self.scale_factor + self.image_position[0]
+            y2 = voc.ymax * self.scale_factor + self.image_position[1]
+
+            self.canvas.create_rectangle(x1, y1, x2, y2, outline="red", tags="box")
+
+            # Draw resize handles
+            handle_size = 6
+            handles = [
+                (x1, y1), (x2, y1), (x2, y2), (x1, y2),  # corners
+                ((x1 + x2) / 2, y1), (x2, (y1 + y2) / 2),  # top and right middle
+                ((x1 + x2) / 2, y2), (x1, (y1 + y2) / 2)  # bottom and left middle
+            ]
+            for hx, hy in handles:
+                self.canvas.create_rectangle(
+                    hx - handle_size, hy - handle_size,
+                    hx + handle_size, hy + handle_size,
+                    fill="blue", outline="white", tags="handle"
+                )
+
+    def get_resize_handle(self, x, y):
+        if not self.bounding_box:
+            return None
+
+        voc = self.bounding_box.to_voc()
+        x1 = voc.xmin * self.scale_factor + self.image_position[0]
+        y1 = voc.ymin * self.scale_factor + self.image_position[1]
+        x2 = voc.xmax * self.scale_factor + self.image_position[0]
+        y2 = voc.ymax * self.scale_factor + self.image_position[1]
+
+        handle_size = 6
+        handles = {
+            "top_left": (x1, y1), "top_right": (x2, y1),
+            "bottom_right": (x2, y2), "bottom_left": (x1, y2),
+            "top": ((x1 + x2) / 2, y1), "right": (x2, (y1 + y2) / 2),
+            "bottom": ((x1 + x2) / 2, y2), "left": (x1, (y1 + y2) / 2)
+        }
+
+        for handle, (hx, hy) in handles.items():
+            if abs(x - hx) <= handle_size and abs(y - hy) <= handle_size:
+                return handle
+
+        return None
+
+    def resize_box(self, x, y):
+        if not self.bounding_box or not self.original_box:
+            return
+
+        x1, y1, x2, y2 = self.original_box
+
+        if self.resize_handle == "top_left":
+            x1, y1 = x, y
+        elif self.resize_handle == "top_right":
+            x2, y1 = x, y
+        elif self.resize_handle == "bottom_right":
+            x2, y2 = x, y
+        elif self.resize_handle == "bottom_left":
+            x1, y2 = x, y
+        elif self.resize_handle == "top":
+            y1 = y
+        elif self.resize_handle == "right":
+            x2 = x
+        elif self.resize_handle == "bottom":
+            y2 = y
+        elif self.resize_handle == "left":
+            x1 = x
+
+        # Ensure minimum size
+        if x2 - x1 < 5:
+            if self.resize_handle in ["top_left", "bottom_left", "left"]:
+                x1 = x2 - 5
+            else:
+                x2 = x1 + 5
+        if y2 - y1 < 5:
+            if self.resize_handle in ["top_left", "top_right", "top"]:
+                y1 = y2 - 5
+            else:
+                y2 = y1 + 5
+
+        self.update_bounding_box(x1, y1, x2, y2)
 
     def update_entries(self):
         if self.bounding_box:
