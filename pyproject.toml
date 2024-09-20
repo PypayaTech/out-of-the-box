@@ -9,7 +9,7 @@ readme = "README.md"
 [tool.poetry.dependencies]
 python = "^3.8"
 opencv-python = ">=3.4.0.12, <5.0.0.0"
-numpy = "^1.22.0"
+numpy = ">=1.22.0"
 pillow = "^9.0.0"
 
 [tool.poetry.group.dev.dependencies]
