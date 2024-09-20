@@ -24,6 +24,7 @@ class ROISelector(tk.Frame):
         self.bounding_box: Optional[BoundingBox] = None
         self.image_position: Tuple[int, int] = (0, 0)
         self.scale_factor: float = 1.0
+        self.preserve_aspect_ratio: bool = False
 
         self._setup_ui()
         self._bind_events()
@@ -39,6 +40,15 @@ class ROISelector(tk.Frame):
         open_button = tk.Button(self.entry_frame, text="Open Image", command=self.open_image)
         open_button.pack(pady=PADDING)
 
+        self.preserve_ratio_var = tk.BooleanVar()
+        self.preserve_ratio_checkbox = tk.Checkbutton(
+            self.entry_frame,
+            text="Preserve Aspect Ratio",
+            variable=self.preserve_ratio_var,
+            command=self.toggle_aspect_ratio_preservation
+        )
+        self.preserve_ratio_checkbox.pack(pady=PADDING)
+
         self.canvas = tk.Canvas(self.image_frame)
         self.canvas.pack(fill=tk.BOTH, expand=True)
 
@@ -50,6 +60,10 @@ class ROISelector(tk.Frame):
         self.yolo_entries = self._create_format_entries("YOLO",
                                                         ["x_center", "y_center", "width", "height", "x_center_norm",
                                                          "y_center_norm", "width_norm", "height_norm"])
+
+    def toggle_aspect_ratio_preservation(self):
+        """Toggle aspect ratio preservation."""
+        self.preserve_aspect_ratio = self.preserve_ratio_var.get()
 
     def _bind_events(self):
         """Bind mouse events to the canvas."""
@@ -255,23 +269,60 @@ class ROISelector(tk.Frame):
             return
 
         x1, y1, x2, y2 = self.original_box
+        original_width = x2 - x1
+        original_height = y2 - y1
+        original_aspect_ratio = original_width / original_height if original_height != 0 else 1
 
-        if self.resize_handle == "top_left":
-            x1, y1 = x, y
-        elif self.resize_handle == "top_right":
-            x2, y1 = x, y
-        elif self.resize_handle == "bottom_right":
-            x2, y2 = x, y
-        elif self.resize_handle == "bottom_left":
-            x1, y2 = x, y
-        elif self.resize_handle == "top":
-            y1 = y
-        elif self.resize_handle == "right":
-            x2 = x
-        elif self.resize_handle == "bottom":
-            y2 = y
-        elif self.resize_handle == "left":
-            x1 = x
+        if self.preserve_aspect_ratio:
+            if self.resize_handle in ["top_left", "bottom_right"]:
+                new_width = abs(x - x2 if self.resize_handle == "top_left" else x - x1)
+                new_height = new_width / original_aspect_ratio
+                if self.resize_handle == "top_left":
+                    x1, y1 = x, y2 - new_height
+                else:
+                    x2, y2 = x, y1 + new_height
+            elif self.resize_handle in ["top_right", "bottom_left"]:
+                new_width = abs(x - x1 if self.resize_handle == "top_right" else x - x2)
+                new_height = new_width / original_aspect_ratio
+                if self.resize_handle == "top_right":
+                    x2, y1 = x, y2 - new_height
+                else:
+                    x1, y2 = x, y1 + new_height
+            elif self.resize_handle in ["top", "bottom"]:
+                new_height = abs(y - y2 if self.resize_handle == "top" else y - y1)
+                new_width = new_height * original_aspect_ratio
+                if self.resize_handle == "top":
+                    y1 = y
+                    x1, x2 = (x1 + x2) / 2 - new_width / 2, (x1 + x2) / 2 + new_width / 2
+                else:
+                    y2 = y
+                    x1, x2 = (x1 + x2) / 2 - new_width / 2, (x1 + x2) / 2 + new_width / 2
+            elif self.resize_handle in ["left", "right"]:
+                new_width = abs(x - x2 if self.resize_handle == "left" else x - x1)
+                new_height = new_width / original_aspect_ratio
+                if self.resize_handle == "left":
+                    x1 = x
+                    y1, y2 = (y1 + y2) / 2 - new_height / 2, (y1 + y2) / 2 + new_height / 2
+                else:
+                    x2 = x
+                    y1, y2 = (y1 + y2) / 2 - new_height / 2, (y1 + y2) / 2 + new_height / 2
+        else:
+            if self.resize_handle == "top_left":
+                x1, y1 = x, y
+            elif self.resize_handle == "top_right":
+                x2, y1 = x, y
+            elif self.resize_handle == "bottom_right":
+                x2, y2 = x, y
+            elif self.resize_handle == "bottom_left":
+                x1, y2 = x, y
+            elif self.resize_handle == "top":
+                y1 = y
+            elif self.resize_handle == "right":
+                x2 = x
+            elif self.resize_handle == "bottom":
+                y2 = y
+            elif self.resize_handle == "left":
+                x1 = x
 
         # Ensure minimum size
         if x2 - x1 < MIN_BOX_SIZE:
