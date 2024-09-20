@@ -25,6 +25,8 @@ class ROISelector(tk.Frame):
         self.image_position: Tuple[int, int] = (0, 0)
         self.scale_factor: float = 1.0
         self.preserve_aspect_ratio: bool = False
+        self.is_moving: bool = False
+        self.move_start: Tuple[int, int] = (0, 0)
 
         self._setup_ui()
         self._bind_events()
@@ -67,9 +69,116 @@ class ROISelector(tk.Frame):
 
     def _bind_events(self):
         """Bind mouse events to the canvas."""
-        self.canvas.bind("<ButtonPress-1>", self.start_draw)
-        self.canvas.bind("<B1-Motion>", self.draw)
-        self.canvas.bind("<ButtonRelease-1>", self.end_draw)
+        self.canvas.bind("<ButtonPress-1>", self.start_action)
+        self.canvas.bind("<B1-Motion>", self.drag_action)
+        self.canvas.bind("<ButtonRelease-1>", self.end_action)
+
+    def start_action(self, event):
+        """Start drawing, resizing, or moving the bounding box."""
+        x, y = self.get_image_coordinates(event)
+        if x is None or y is None:
+            return
+
+        self.start_x, self.start_y = x, y
+        self.resize_handle = self.get_resize_handle(event.x, event.y)
+
+        if self.resize_handle and self.bounding_box:
+            voc = self.bounding_box.to_voc()
+            self.original_box = (voc.xmin, voc.ymin, voc.xmax, voc.ymax)
+        elif self.bounding_box and self.is_inside_box(x, y):
+            self.is_moving = True
+            self.move_start = (x, y)
+            voc = self.bounding_box.to_voc()
+            self.original_box = (voc.xmin, voc.ymin, voc.xmax, voc.ymax)
+        else:
+            self.is_moving = False
+            self.bounding_box = None  # Reset bounding box if clicking outside
+            self.canvas.delete("box")
+            self.canvas.delete("handle")
+
+    def drag_action(self, event):
+        """Continue drawing, resizing, or moving the bounding box."""
+        x, y = self.get_image_coordinates(event)
+        if x is None or y is None:
+            return
+
+        if self.resize_handle:
+            self.resize_box(x, y)
+        elif self.is_moving:
+            self.move_box(x, y)
+        elif self.start_x is not None and self.start_y is not None and not self.bounding_box:
+            self.canvas.delete("box")
+            self.canvas.delete("handle")
+            self.canvas.create_rectangle(
+                self.start_x * self.scale_factor + self.image_position[0],
+                self.start_y * self.scale_factor + self.image_position[1],
+                x * self.scale_factor + self.image_position[0],
+                y * self.scale_factor + self.image_position[1],
+                outline="red", tags="box"
+            )
+
+    def end_action(self, event):
+        """Finish drawing, resizing, or moving the bounding box."""
+        x, y = self.get_image_coordinates(event)
+        if x is None or y is None:
+            return
+
+        if self.resize_handle:
+            self.resize_box(x, y)
+        elif self.is_moving:
+            self.move_box(x, y)
+        elif self.start_x is not None and self.start_y is not None and not self.bounding_box:
+            x1, y1 = min(self.start_x, x), min(self.start_y, y)
+            x2, y2 = max(self.start_x, x), max(self.start_y, y)
+
+            # Ensure minimum size
+            if x2 - x1 < MIN_BOX_SIZE:
+                x2 = x1 + MIN_BOX_SIZE
+            if y2 - y1 < MIN_BOX_SIZE:
+                y2 = y1 + MIN_BOX_SIZE
+
+            self.update_bounding_box(x1, y1, x2, y2)
+
+        self.start_x = self.start_y = self.resize_handle = self.original_box = None
+        self.is_moving = False
+
+    def is_inside_box(self, x: int, y: int) -> bool:
+        """Check if the given coordinates are inside the bounding box."""
+        if not self.bounding_box:
+            return False
+        voc = self.bounding_box.to_voc()
+        return voc.xmin <= x <= voc.xmax and voc.ymin <= y <= voc.ymax
+
+    def move_box(self, x: int, y: int):
+        """Move the bounding box to a new position."""
+        if not self.bounding_box or not self.original_box or not self.move_start:
+            return
+
+        dx = x - self.move_start[0]
+        dy = y - self.move_start[1]
+
+        x1, y1, x2, y2 = self.original_box
+        new_x1 = x1 + dx
+        new_y1 = y1 + dy
+        new_x2 = x2 + dx
+        new_y2 = y2 + dy
+
+        # Ensure the box stays within the image boundaries
+        img_width, img_height = self.image.size
+        if new_x1 < 0:
+            new_x2 -= new_x1
+            new_x1 = 0
+        elif new_x2 > img_width:
+            new_x1 -= (new_x2 - img_width)
+            new_x2 = img_width
+        if new_y1 < 0:
+            new_y2 -= new_y1
+            new_y1 = 0
+        elif new_y2 > img_height:
+            new_y1 -= (new_y2 - img_height)
+            new_y2 = img_height
+
+        self.update_bounding_box(new_x1, new_y1, new_x2, new_y2)
 
     def _create_format_entries(self, format_name: str, field_names: list) -> dict:
         """Create input fields for a specific bounding box format."""
@@ -134,54 +243,6 @@ class ROISelector(tk.Frame):
         self.bounding_box = None
         self.canvas.delete("box")
         self.canvas.delete("handle")
-
-    def start_draw(self, event):
-        """Start drawing or resizing the bounding box."""
-        x, y = self.get_image_coordinates(event)
-        if x is not None and y is not None:
-            self.start_x, self.start_y = x, y
-            self.resize_handle = self.get_resize_handle(event.x, event.y)
-            if self.resize_handle and self.bounding_box:
-                voc = self.bounding_box.to_voc()
-                self.original_box = (voc.xmin, voc.ymin, voc.xmax, voc.ymax)
-
-    def draw(self, event):
-        """Continue drawing or resizing the bounding box."""
-        if self.start_x is not None and self.start_y is not None:
-            x, y = self.get_image_coordinates(event)
-            if x is not None and y is not None:
-                if self.resize_handle:
-                    self.resize_box(x, y)
-                else:
-                    self.canvas.delete("box")
-                    self.canvas.delete("handle")
-                    self.canvas.create_rectangle(
-                        self.start_x * self.scale_factor + self.image_position[0],
-                        self.start_y * self.scale_factor + self.image_position[1],
-                        x * self.scale_factor + self.image_position[0],
-                        y * self.scale_factor + self.image_position[1],
-                        outline="red", tags="box"
-                    )
-
-    def end_draw(self, event):
-        """Finish drawing or resizing the bounding box."""
-        x, y = self.get_image_coordinates(event)
-        if x is not None and y is not None:
-            if self.resize_handle:
-                self.resize_box(x, y)
-            elif self.start_x is not None and self.start_y is not None:
-                x1, y1 = min(self.start_x, x), min(self.start_y, y)
-                x2, y2 = max(self.start_x, x), max(self.start_y, y)
-
-                # Ensure minimum size
-                if x2 - x1 < MIN_BOX_SIZE:
-                    x2 = x1 + MIN_BOX_SIZE
-                if y2 - y1 < MIN_BOX_SIZE:
-                    y2 = y1 + MIN_BOX_SIZE
-
-                self.update_bounding_box(x1, y1, x2, y2)
-
-        self.start_x = self.start_y = self.resize_handle = self.original_box = None
 
     def get_image_coordinates(self, event) -> Tuple[Optional[int], Optional[int]]:
         """Convert canvas coordinates to image coordinates."""
